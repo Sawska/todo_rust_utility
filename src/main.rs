@@ -70,14 +70,17 @@ fn login(term:Term,conn:Connection)
     term.write_line("Enter your password");
     let password = term.read_line().unwrap();
 
-    check_account(name, password, conn);
+    match check_account(name, password, conn)  {
+        true => todo!(),
+        false => todo!(),
+    } 
+
+    
 }
 
-fn check_account(login:String,password:String,conn:Connection)
+fn check_account(login:String,password:String,conn:Connection) -> bool
 {
-    let user = conn.execute(
-        "SELECT * FROM users WHERE login = ?1 AND password = ?2", (login,password));
-
-
+     conn.execute(
+        "SELECT * FROM users WHERE login = ?1 AND password = ?2", (login,password)).unwrap() != 0
 
 }
