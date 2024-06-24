@@ -36,10 +36,37 @@ fn start()
 {
     let conn =  Connection::open("todos.db").unwrap();
     let term = Term::stdout();
+
+    initialize_database(&conn);
     term.write_line("Welcome to todo list console-utilities");
     term.clear_line();
 
     confirm(term,conn);
+}
+
+fn initialize_database(conn: &Connection) -> Result<()> {
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            login TEXT NOT NULL UNIQUE,
+            password TEXT NOT NULL
+        )",
+        [],
+    )?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS todos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            userid INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            done BOOLEAN NOT NULL,
+            tasks TEXT NOT NULL,
+            FOREIGN KEY(userid) REFERENCES users(id)
+        )",
+        [],
+    )?;
+
+    Ok(())
 }
 
 fn confirm(term:Term,conn:Connection) {
