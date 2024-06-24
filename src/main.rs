@@ -1,28 +1,26 @@
 use std::io::Write;
 use std::process::exit;
-use std::{option, thread};
-use std::time::Duration;
 use console::Term;
 use dialoguer::{Confirm, Input};
 use rusqlite::{params, Connection, Result,Error};
 use serde_json;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 struct User {
     id:i32,
     login:String,
     password:String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize,Clone)]
 struct TodoList {
     name: String,
     done: bool,
     tasks: Vec<Task>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize,Clone)]
 struct Task {
     name: String,
     done: bool,
@@ -127,9 +125,18 @@ fn login(term:Term,conn:Connection)
     
 }
 
-fn create_new_list()
+fn create_new_list(user: &User,mut term: &Term,conn: &Connection) -> Result<()>
 {
+    term.write_all(b"Think for a name for todolist:\n");
+    let new_name: String = Input::new().interact_text().unwrap();
 
+    let tasks:Vec<Task> = Vec::new();
+    let tasks_json = serde_json::to_string(&tasks).unwrap(); 
+    conn.execute("INSERT INTO todos VALUES(name,done,tasks) ?1,?2,?3", params![new_name,false,tasks_json])?;
+
+
+
+    Ok(())
 }
 
 fn show_todolists(todos: &Vec<TodoList>, term: &Term) -> Result<(), std::io::Error> {
@@ -204,7 +211,7 @@ fn show_menu(user:User,term: &Term,conn: &Connection)
     let todos = load_lists(user.id, &conn);
 
             match todos {
-                Ok(todos) => {
+                Ok(mut todos) => {
                     term.write_line("Choose option");
                     print_optiions(&term);
                     
@@ -221,7 +228,7 @@ fn show_menu(user:User,term: &Term,conn: &Connection)
 
                     match option {
                         1 => {
-                            create_new_list();
+                            create_new_list(&user,term,conn);
                         }
                         2 => {
                             if todos.len() == 0 {
@@ -262,7 +269,7 @@ fn select_todo_list(user:&User,mut term: &Term,conn: &Connection,todos:Vec<TodoL
         }
     }
 
-    let todo = &todos[(option - 1) as usize];
+    let mut todo = &todos[(option - 1) as usize];
     load_todo(todo, &mut term);
 
     todolist_options(&mut term);
@@ -272,22 +279,24 @@ fn select_todo_list(user:&User,mut term: &Term,conn: &Connection,todos:Vec<TodoL
     loop {
         option_list = Input::new().interact_text().unwrap_or(-1);
 
-        if (1..=4).contains(&option_list) {
+        if (1..=5).contains(&option_list) {
             break;
         } else {
-            term.write_all(b"Invalid option. Please enter a number between 1 and 4\n");
+            term.write_all(b"Invalid option. Please enter a number between 1 and 5\n");
         }
     }
 
     match option_list {
-        1 => Ok({
-            load_todo(todo, &mut term);
+        1 => {
+            load_todo(todo, &mut term).unwrap();
             
+            select_task(user, &mut term, conn, &mut todo.clone());
         
-        }),
-        2 => Ok(edit_name(&mut term, user, todo, conn).unwrap()),
-        3 => Ok(edit_status(&mut term, user, todo, conn).unwrap()),
-        4 => Ok(delete_todolist(&mut term, user, todo, conn).unwrap()),
+        },
+        2 => edit_name(&mut term, user, todo, conn).unwrap(),
+        3 => edit_status(&mut term, user, todo, conn).unwrap(),
+        4 => add_new_task(user,&mut todo.clone(),term,conn).unwrap(),
+        5 => delete_todolist(&mut term, user, todo, conn).unwrap(),
         _ => unreachable!(),
     };
 
@@ -295,6 +304,24 @@ fn select_todo_list(user:&User,mut term: &Term,conn: &Connection,todos:Vec<TodoL
 
 }
 
+fn add_new_task(user: &User,todo: &mut TodoList,mut term: &Term,conn: &Connection) -> Result<()>
+{
+
+    term.write_all(b"Think for a name for task:\n");
+    let new_name: String = Input::new().interact_text().unwrap();
+
+    let task:Task = Task {
+        name: new_name,
+        done: false,
+    };
+
+    todo.tasks.push(task);
+
+    let tasks_json = serde_json::to_string(&todo.tasks).unwrap();
+    conn.execute("UPDATE todos SET tasks = ?1 WHERE userid = ?2 AND name = ?3", params![tasks_json, user.id, todo.name])?;
+    term.write_all(b"Added task\n");
+    Ok(())
+}
 
 
 fn load_todo(todo: &TodoList, term: &mut impl std::io::Write) -> Result<()> {
@@ -348,13 +375,13 @@ fn todolist_options(term: &mut impl std::io::Write) -> Result<()> {
     term.write_all(b"1) Show tasks\n");
     term.write_all(b"2) Edit name\n");
     term.write_all(b"3) Edit status\n");
-    term.write_all(b"4) Delete\n");
+    term.write_all(b"4) Add new task\n");
+    term.write_all(b"5) Delete\n");
     Ok(())
 }
 
-fn select_task(user:&User,mut term: &Term,conn: &Connection,todo:TodoList)
-{   
-    term.write_line("Select task");
+fn select_task(user: &User, term: &mut impl std::io::Write, conn: &Connection, todo: &mut TodoList) -> Result<()> {   
+    term.write_all(b"Select task\n");
 
     let mut option: i32;
 
@@ -368,11 +395,10 @@ fn select_task(user:&User,mut term: &Term,conn: &Connection,todo:TodoList)
         }
     }
 
-    let task = &todo.tasks[(option - 1) as usize];
+    let task = &mut todo.tasks[(option - 1) as usize];
+    options_for_tasks(term)?;
 
-
-    options_for_tasks(& mut term);
-            let mut option_task: i32;
+    let mut option_task: i32;
 
     loop {
         option_task = Input::new().interact_text().unwrap_or(-1);
@@ -385,41 +411,45 @@ fn select_task(user:&User,mut term: &Term,conn: &Connection,todo:TodoList)
     }
 
     match option_task {
-        1 => edit_task_name(),
-        2 => edit_task_status(),
-        3 => delete_task(),
+        1 => edit_task_name(user, todo, (option-1) as usize, term, conn),
+        2 => edit_task_status(user, todo, (option-1) as usize, term, conn),
+        3 => delete_task(user, todo, (option-1) as usize, term, conn),
         _ => unreachable!(),
-    }
+    };
+
+    Ok(())
 }
 
-fn edit_task_name(user: &User,mut task:Task,mut todo:TodoList,index:usize,mut term: &Term,conn: &Connection) {
-
-
-    
+fn edit_task_name(user: &User, todo: &mut TodoList, index: usize, term: &mut impl std::io::Write, conn: &Connection) -> Result<()> {
     term.write_all(b"Type new name:\n");
     let new_name: String = Input::new().interact_text().unwrap();
-    task.name = new_name;
-    todo.tasks[index] = task;
-    conn.execute("UPDATE todos SET tasks = ?1 WHERE userid = ?2 AND name = ?3", params![json(todo.tasks), user.id, todo.name]);
-    term.write_all(b"Task  name updated successfully.\n");
+    todo.tasks[index].name = new_name;
+
+    let tasks_json = serde_json::to_string(&todo.tasks).unwrap();
+    conn.execute("UPDATE todos SET tasks = ?1 WHERE userid = ?2 AND name = ?3", params![tasks_json, user.id, todo.name])?;
+    term.write_all(b"Task name updated successfully.\n");
+    Ok(())
 }
 
-fn edit_task_status(user: &User,mut task:Task,mut todo:TodoList,index:usize,mut term: &Term,conn: &Connection) {
+fn edit_task_status(user: &User, todo: &mut TodoList, index: usize, term: &mut impl std::io::Write, conn: &Connection) -> Result<()> {
     let res = Confirm::new().with_prompt("Do you want to change status?").interact().unwrap();
     
     if res {
-        let new_status = !task.done;
-        task.done = new_status;
+        todo.tasks[index].done = !todo.tasks[index].done;
 
-        todo.tasks[index] = task;
-
-        conn.execute("UPDATE todos SET tasks = ?1 WHERE userid = ?2 AND name = ?3", params![json(todo.tasks), user.id, todo.name]);
-        term.write_all(b"task status updated successfully.\n");
+        let tasks_json = serde_json::to_string(&todo.tasks).unwrap();
+        conn.execute("UPDATE todos SET tasks = ?1 WHERE userid = ?2 AND name = ?3", params![tasks_json, user.id, todo.name])?;
+        term.write_all(b"Task status updated successfully.\n");
     }
+
+    Ok(())
 }
 
-fn delete_task(user: &User,mut todo:TodoList,index:usize,mut term: &Term,conn: &Connection) {
+fn delete_task(user: &User, todo: &mut TodoList, index: usize, term: &mut impl std::io::Write, conn: &Connection) -> Result<()> {
     todo.tasks.remove(index);
-    conn.execute("UPDATE todos SET tasks = ?1 WHERE userid = ?2 AND name = ?3", params![json(todo.tasks), user.id, todo.name]);
-
+    
+    let tasks_json = serde_json::to_string(&todo.tasks).unwrap();
+    conn.execute("UPDATE todos SET tasks = ?1 WHERE userid = ?2 AND name = ?3", params![tasks_json, user.id, todo.name])?;
+    term.write_all(b"Task deleted successfully.\n");
+    Ok(())
 }
