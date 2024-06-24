@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::process::exit;
 use std::{option, thread};
 use std::time::Duration;
@@ -230,6 +231,7 @@ fn show_menu(user:User,term: &Term,conn: &Connection)
                             show_todolists(&todos, &term);
                             select_todo_list(&user, term, conn, todos);
 
+
                         }
                         3 => {
                             exit(0);
@@ -245,26 +247,179 @@ fn show_menu(user:User,term: &Term,conn: &Connection)
 }
 
 
-fn select_todo_list(user:&User,term: &Term,conn: &Connection,todos:Vec<TodoList>)
+fn select_todo_list(user:&User,mut term: &Term,conn: &Connection,todos:Vec<TodoList>)  -> Result<()>
 {
 
-    term.write_line("Seelect todolist");
-    let mut option:i32;
+    let mut option: i32;
 
     loop {
-        option = Input::new().interact_text().unwrap();
+        option = Input::new().interact_text().unwrap_or(-1);
 
-        if (1..todos.len() as i32).contains(&option) {
+        if (1..=todos.len() as i32).contains(&option) {
             break;
-        }    else {
-            
-            term.write_line(&format!("Invalid option. Please enter a number between 1 and {}",todos.len()));
+        } else {
+            term.write_all(format!("Invalid option. Please enter a number between 1 and {}\n", todos.len()).as_bytes());
         }
+    }
+
+    let todo = &todos[(option - 1) as usize];
+    load_todo(todo, &mut term);
+
+    todolist_options(&mut term);
+
+    let mut option_list: i32;
+
+    loop {
+        option_list = Input::new().interact_text().unwrap_or(-1);
+
+        if (1..=4).contains(&option_list) {
+            break;
+        } else {
+            term.write_all(b"Invalid option. Please enter a number between 1 and 4\n");
+        }
+    }
+
+    match option_list {
+        1 => Ok({
+            load_todo(todo, &mut term);
+            
+        
+        }),
+        2 => Ok(edit_name(&mut term, user, todo, conn).unwrap()),
+        3 => Ok(edit_status(&mut term, user, todo, conn).unwrap()),
+        4 => Ok(delete_todolist(&mut term, user, todo, conn).unwrap()),
+        _ => unreachable!(),
+    };
+
+    Ok(())
+
+}
+
+
+
+fn load_todo(todo: &TodoList, term: &mut impl std::io::Write) -> Result<()> {
+    term.write_all(format!("{}\n", todo.name).as_bytes());
+
+    let status = if todo.done { "Finished" } else { "In Progress" };
+    term.write_all(format!("status: {}\n", status).as_bytes());
+
+    for (i, task) in todo.tasks.iter().enumerate() {
+        let task_status = if task.done { "✅" } else { "❌" };
+        term.write_all(format!("[{}] {} [{}]\n", i + 1, task.name, task_status).as_bytes());
+    }
+
+    Ok(())
+}
+
+fn options_for_tasks(term: &mut impl std::io::Write) -> Result<()> {
+    term.write_all(b"1) Edit name\n");
+    term.write_all(b"2) Edit status\n");
+    term.write_all(b"3) Delete\n");
+    Ok(())
+}
+
+fn delete_todolist(term: &mut impl std::io::Write, user: &User, todo: &TodoList, conn: &Connection) -> Result<()> {
+    conn.execute("DELETE FROM todos WHERE userid = ?1 AND name = ?2", params![user.id, todo.name])?;
+    term.write_all(b"Todo list deleted successfully.\n");
+    Ok(())
+}
+
+fn edit_name(term: &mut impl std::io::Write, user: &User, todo: &TodoList, conn: &Connection) -> Result<()> {
+    term.write_all(b"Type new name:\n");
+    let new_name: String = Input::new().interact_text().unwrap();
+    conn.execute("UPDATE todos SET name = ?1 WHERE userid = ?2 AND name = ?3", params![new_name, user.id, todo.name])?;
+    term.write_all(b"Todo list name updated successfully.\n");
+    Ok(())
+}
+
+fn edit_status(term: &mut impl std::io::Write, user: &User, todo: &TodoList, conn: &Connection) -> Result<()> {
+    let res = Confirm::new().with_prompt("Do you want to change status?").interact().unwrap();
+    
+    if res {
+        let new_status = !todo.done;
+        conn.execute("UPDATE todos SET done = ?1 WHERE userid = ?2 AND name = ?3", params![new_status, user.id, todo.name])?;
+        term.write_all(b"Todo list status updated successfully.\n");
+    }
+
+    Ok(())
+}
+
+fn todolist_options(term: &mut impl std::io::Write) -> Result<()> {
+    term.write_all(b"1) Show tasks\n");
+    term.write_all(b"2) Edit name\n");
+    term.write_all(b"3) Edit status\n");
+    term.write_all(b"4) Delete\n");
+    Ok(())
+}
+
+fn select_task(user:&User,mut term: &Term,conn: &Connection,todo:TodoList)
+{   
+    term.write_line("Select task");
+
+    let mut option: i32;
+
+    loop {
+        option = Input::new().interact_text().unwrap_or(-1);
+
+        if (1..=todo.tasks.len() as i32).contains(&option) {
+            break;
+        } else {
+            term.write_all(format!("Invalid option. Please enter a number between 1 and {}\n", todo.tasks.len()).as_bytes());
+        }
+    }
+
+    let task = &todo.tasks[(option - 1) as usize];
+
+
+    options_for_tasks(& mut term);
+            let mut option_task: i32;
+
+    loop {
+        option_task = Input::new().interact_text().unwrap_or(-1);
+
+        if (1..=3).contains(&option_task) {
+            break;
+        } else {
+            term.write_all(b"Invalid option. Please enter a number between 1 and 3\n");
+        }
+    }
+
+    match option_task {
+        1 => edit_task_name(),
+        2 => edit_task_status(),
+        3 => delete_task(),
+        _ => unreachable!(),
     }
 }
 
-fn todolist_options(term:&Term)
-{
-    term.write_line("1)Show tasks");
-    term.write_line("2)Delete");
+fn edit_task_name(user: &User,mut task:Task,mut todo:TodoList,index:usize,mut term: &Term,conn: &Connection) {
+
+
+    
+    term.write_all(b"Type new name:\n");
+    let new_name: String = Input::new().interact_text().unwrap();
+    task.name = new_name;
+    todo.tasks[index] = task;
+    conn.execute("UPDATE todos SET tasks = ?1 WHERE userid = ?2 AND name = ?3", params![json(todo.tasks), user.id, todo.name]);
+    term.write_all(b"Task  name updated successfully.\n");
+}
+
+fn edit_task_status(user: &User,mut task:Task,mut todo:TodoList,index:usize,mut term: &Term,conn: &Connection) {
+    let res = Confirm::new().with_prompt("Do you want to change status?").interact().unwrap();
+    
+    if res {
+        let new_status = !task.done;
+        task.done = new_status;
+
+        todo.tasks[index] = task;
+
+        conn.execute("UPDATE todos SET tasks = ?1 WHERE userid = ?2 AND name = ?3", params![json(todo.tasks), user.id, todo.name]);
+        term.write_all(b"task status updated successfully.\n");
+    }
+}
+
+fn delete_task(user: &User,mut todo:TodoList,index:usize,mut term: &Term,conn: &Connection) {
+    todo.tasks.remove(index);
+    conn.execute("UPDATE todos SET tasks = ?1 WHERE userid = ?2 AND name = ?3", params![json(todo.tasks), user.id, todo.name]);
+
 }
