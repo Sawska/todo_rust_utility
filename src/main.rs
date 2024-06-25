@@ -5,13 +5,16 @@ use dialoguer::{Confirm, Input};
 use rusqlite::{params, Connection, Result,Error};
 use serde_json;
 use serde::{Deserialize, Serialize};
+use bcrypt::{hash, DEFAULT_COST};
 
 #[derive(Debug,Clone)]
 struct User {
     id:i32,
     login:String,
-    password:String,
+    password:String
 }
+
+
 
 #[derive(Debug, Serialize, Deserialize,Clone)]
 struct TodoList {
@@ -37,9 +40,9 @@ fn start()
     let conn =  Connection::open("todos.db").unwrap();
     let term = Term::stdout();
 
-    initialize_database(&conn);
-    term.write_line("Welcome to todo list console-utilities");
-    term.clear_line();
+    let _ = initialize_database(&conn);
+    let _ = term.write_line("Welcome to todo list console-utilities");
+    let _ = term.clear_line();
 
     confirm(term,conn);
 }
@@ -70,23 +73,37 @@ fn initialize_database(conn: &Connection) -> Result<()> {
 }
 
 fn confirm(term:Term,conn:Connection) {
-    let option = Confirm::new()
+    let mut option:Option<bool> = None;
+
+    while  option == None {
+        option = Confirm::new()
         .with_prompt("Login or Register")
         .interact_opt()
         .unwrap();
-
     match option {
-        Some(true) => login(term,conn),
-        Some(false) => register(term,conn),
+        Some(true) => login(&term,&conn),
+        Some(false) => register(&term,&conn),
         None => println!("No choice was made."),
+    }   
     }
 }
 
-fn register(term:Term,conn:Connection)
+fn register(term:&Term,conn:&Connection)
 {
-    term.write_line("Create your username");
 
-    let name = term.read_line().unwrap();
+    
+    let mut name:String;
+
+    loop {
+        let _ = term.write_line("Create your username");
+        name = term.read_line().unwrap();
+
+        if !if_login_already_exists(&name, conn).unwrap() {
+            break;
+        }
+
+        let _ = term.write_line("This username already taken");
+    }
     
 
 
@@ -94,13 +111,13 @@ fn register(term:Term,conn:Connection)
     let mut password2:String = "a".to_string();
 
     while password != password2 {
-    term.write_line("Enter your password");
+    let _ = term.write_line("Enter your password");
      password = term.read_line().unwrap();
-    term.write_line("Reenter password");
+    let _ = term.write_line("Reenter password");
     password2 = term.read_line().unwrap();
     if password != password2
     {
-        term.write_line("Passwords do not match");
+        let _ = term.write_line("Passwords do not match");
     }
     }
 
@@ -108,13 +125,11 @@ fn register(term:Term,conn:Connection)
 
     match user {
         Some(user) => {
-            term.write_line("created user");
-
-            show_menu(user, &term, &conn);
-
+            let _ = term.write_line("created user");
+                show_menu(&user, &term, &conn);   
         },
         None => {
-            term.write_line("error occured during creating user");
+            let _ = term.write_line("error occured during creation of a user");
         },
     }
 
@@ -123,29 +138,39 @@ fn register(term:Term,conn:Connection)
 
 }
 fn create_account(login: String, password: String, conn: &Connection) -> Option<User> {
-    conn.execute("INSERT INTO users (login, password) VALUES (?1, ?2)", params![login, password]);
 
-    check_account(login, password, conn)
+    let hashed_password = hash(password, DEFAULT_COST).unwrap();
+    let _ = conn.execute("INSERT INTO users (login, password) VALUES (?1, ?2)", params![login, hashed_password]);
+
+    check_account(login, hashed_password, conn)
     
 }
 
-fn login(term:Term,conn:Connection)
+fn login(term:&Term,conn:&Connection)
 {
-    term.write_line("Please enter your login");
+    let _ = term.write_line("Please enter your login");
     let name = term.read_line().unwrap();
-    term.write_line("Enter your password");
+    let _ = term.write_line("Enter your password");
     let password = term.read_line().unwrap();
 
-    let user = check_account(name, password, &conn);
+    let hashed_password = match hash(password, DEFAULT_COST) {
+        Ok(hashed) => hashed,
+        Err(_) => {
+            let _ = term.write_line("Error hashing password");
+            return;
+        }
+    };
+
+    let user = check_account(name, hashed_password, &conn);
 
     match user {
         Some(user) => {
-            term.write_line("loggined");
+            let _ = term.write_line("loggined");
 
-            show_menu(user, &term, &conn);
+            show_menu(&user, &term, &conn);
         },
         None => {
-            term.write_line("wrong login or password");
+            let _ = term.write_line("wrong login or password");
             login(term, conn);
         }
     }
@@ -154,15 +179,11 @@ fn login(term:Term,conn:Connection)
 
 fn create_new_list(user: &User,mut term: &Term,conn: &Connection) -> Result<()>
 {
-    term.write_all(b"Think for a name for todolist:\n");
+    let _ = term.write_all(b"Think for a name for todolist:\n");
     let new_name: String = Input::new().interact_text().unwrap();
-
     let tasks:Vec<Task> = Vec::new();
     let tasks_json = serde_json::to_string(&tasks).unwrap(); 
-    conn.execute("INSERT INTO todos VALUES(name,done,tasks) ?1,?2,?3", params![new_name,false,tasks_json])?;
-
-
-
+    conn.execute("INSERT INTO todos VALUES(name,done,tasks,userid) ?1,?2,?3", params![new_name,false,tasks_json,user.id])?;
     Ok(())
 }
 
@@ -182,9 +203,12 @@ fn show_todolists(todos: &Vec<TodoList>, term: &Term) -> Result<(), std::io::Err
 
 fn print_optiions(term: &Term)
 {
-    term.write_line("1) Create new todolist");
-    term.write_line("2) Select todolist");
-    term.write_line("3) Exit");
+    let _ = term.write_line("1) Create new todolist");
+    let _ = term.write_line("2) Select todolist");
+    let _ = term.write_line("3) Update login");
+    let _ = term.write_line("4) Update password");        
+    let _ = term.write_line("5) Delete User");
+    let _ = term.write_line("6) Exit");
 }
 
 
@@ -210,7 +234,7 @@ fn check_account(login: String, password: String, conn: &Connection) -> Option<U
 }
 
 fn load_lists(id: i32, conn: &Connection) -> Result<Vec<TodoList>, Error> {
-    let mut stmt = conn.prepare("SELECT name, done, tasks FROM todos WHERE id = ?1")?;
+    let mut stmt = conn.prepare("SELECT name, done, tasks FROM todos WHERE userid = ?1")?;
     
     let todo_res = stmt.query_map(params![id], |row| {
         let tasks_json: String = row.get(2)?;
@@ -233,41 +257,53 @@ fn load_lists(id: i32, conn: &Connection) -> Result<Vec<TodoList>, Error> {
 }
 
 
-fn show_menu(user:User,term: &Term,conn: &Connection)
+fn show_menu(user:&User,term: &Term,conn: &Connection)
 {
+
+    
+    let _ = term.write_line(&format!("Welcome to the system {}",user.login));
     let todos = load_lists(user.id, &conn);
 
             match todos {
-                Ok(mut todos) => {
-                    term.write_line("Choose option");
+                Ok(todos) => {
+                    let _ = term.write_line("Choose option");
                     print_optiions(&term);
                     
                     let mut option: i32;
                     loop {
                         option = Input::new().interact_text().unwrap();
                         
-                        if (1..=3).contains(&option) {
+                        if (1..=6).contains(&option) {
                             break;
                         } else {
-                            term.write_line( "Invalid option. Please enter a number between 1 and 3.");
+                            let _ = term.write_line( "Invalid option. Please enter a number between 1 and 6.");
                         }
                     }
 
                     match option {
                         1 => {
-                            create_new_list(&user,term,conn);
+                            let _ = create_new_list(&user,term,conn);
                         }
                         2 => {
                             if todos.len() == 0 {
-                                term.write_line( "There is no todolists to select");
+                                let _ = term.write_line( "There is no todolists to select");
                             }
 
-                            show_todolists(&todos, &term);
-                            select_todo_list(&user, term, conn, todos);
+                            let _ = show_todolists(&todos, &term);
+                            let _ = select_todo_list(&user, term, conn, todos);
 
 
                         }
                         3 => {
+                            change_login(user, term, conn).unwrap();
+                        }
+                        4 => {
+                            update_password(user, term, conn).unwrap();
+                        } 
+                        5 => {
+                            delete_user(user, term, conn).unwrap();
+                        }
+                        6 => {
                             exit(0);
                         }
                         _ => unreachable!(),
@@ -292,14 +328,14 @@ fn select_todo_list(user:&User,mut term: &Term,conn: &Connection,todos:Vec<TodoL
         if (1..=todos.len() as i32).contains(&option) {
             break;
         } else {
-            term.write_all(format!("Invalid option. Please enter a number between 1 and {}\n", todos.len()).as_bytes());
+            let _ = term.write_all(format!("Invalid option. Please enter a number between 1 and {}\n", todos.len()).as_bytes());
         }
     }
 
-    let mut todo = &todos[(option - 1) as usize];
-    load_todo(todo, &mut term);
+    let todo = &todos[(option - 1) as usize];
+    let _ = load_todo(todo, &mut term);
 
-    todolist_options(&mut term);
+    let _ = todolist_options(&mut term);
 
     let mut option_list: i32;
 
@@ -309,7 +345,7 @@ fn select_todo_list(user:&User,mut term: &Term,conn: &Connection,todos:Vec<TodoL
         if (1..=5).contains(&option_list) {
             break;
         } else {
-            term.write_all(b"Invalid option. Please enter a number between 1 and 5\n");
+            let _ = term.write_all(b"Invalid option. Please enter a number between 1 and 5\n");
         }
     }
 
@@ -317,7 +353,7 @@ fn select_todo_list(user:&User,mut term: &Term,conn: &Connection,todos:Vec<TodoL
         1 => {
             load_todo(todo, &mut term).unwrap();
             
-            select_task(user, &mut term, conn, &mut todo.clone());
+            let _ = select_task(user, &mut term, conn, &mut todo.clone());
         
         },
         2 => edit_name(&mut term, user, todo, conn).unwrap(),
@@ -334,7 +370,7 @@ fn select_todo_list(user:&User,mut term: &Term,conn: &Connection,todos:Vec<TodoL
 fn add_new_task(user: &User,todo: &mut TodoList,mut term: &Term,conn: &Connection) -> Result<()>
 {
 
-    term.write_all(b"Think for a name for task:\n");
+    let _ = term.write_all(b"Think for a name for task:\n");
     let new_name: String = Input::new().interact_text().unwrap();
 
     let task:Task = Task {
@@ -346,43 +382,43 @@ fn add_new_task(user: &User,todo: &mut TodoList,mut term: &Term,conn: &Connectio
 
     let tasks_json = serde_json::to_string(&todo.tasks).unwrap();
     conn.execute("UPDATE todos SET tasks = ?1 WHERE userid = ?2 AND name = ?3", params![tasks_json, user.id, todo.name])?;
-    term.write_all(b"Added task\n");
+    let _ = term.write_all(b"Added task\n");
     Ok(())
 }
 
 
 fn load_todo(todo: &TodoList, term: &mut impl std::io::Write) -> Result<()> {
-    term.write_all(format!("{}\n", todo.name).as_bytes());
+    let _ = term.write_all(format!("{}\n", todo.name).as_bytes());
 
     let status = if todo.done { "Finished" } else { "In Progress" };
-    term.write_all(format!("status: {}\n", status).as_bytes());
+    let _ = term.write_all(format!("status: {}\n", status).as_bytes());
 
     for (i, task) in todo.tasks.iter().enumerate() {
         let task_status = if task.done { "✅" } else { "❌" };
-        term.write_all(format!("[{}] {} [{}]\n", i + 1, task.name, task_status).as_bytes());
+        let _ = term.write_all(format!("[{}] {} [{}]\n", i + 1, task.name, task_status).as_bytes());
     }
 
     Ok(())
 }
 
 fn options_for_tasks(term: &mut impl std::io::Write) -> Result<()> {
-    term.write_all(b"1) Edit name\n");
-    term.write_all(b"2) Edit status\n");
-    term.write_all(b"3) Delete\n");
+    let _ = term.write_all(b"1) Edit name\n");
+    let _ = term.write_all(b"2) Edit status\n");
+    let _ = term.write_all(b"3) Delete\n");
     Ok(())
 }
 
 fn delete_todolist(term: &mut impl std::io::Write, user: &User, todo: &TodoList, conn: &Connection) -> Result<()> {
     conn.execute("DELETE FROM todos WHERE userid = ?1 AND name = ?2", params![user.id, todo.name])?;
-    term.write_all(b"Todo list deleted successfully.\n");
+    let _ = term.write_all(b"Todo list deleted successfully.\n");
     Ok(())
 }
 
 fn edit_name(term: &mut impl std::io::Write, user: &User, todo: &TodoList, conn: &Connection) -> Result<()> {
-    term.write_all(b"Type new name:\n");
+    let _ = term.write_all(b"Type new name:\n");
     let new_name: String = Input::new().interact_text().unwrap();
     conn.execute("UPDATE todos SET name = ?1 WHERE userid = ?2 AND name = ?3", params![new_name, user.id, todo.name])?;
-    term.write_all(b"Todo list name updated successfully.\n");
+    let _ = term.write_all(b"Todo list name updated successfully.\n");
     Ok(())
 }
 
@@ -392,23 +428,23 @@ fn edit_status(term: &mut impl std::io::Write, user: &User, todo: &TodoList, con
     if res {
         let new_status = !todo.done;
         conn.execute("UPDATE todos SET done = ?1 WHERE userid = ?2 AND name = ?3", params![new_status, user.id, todo.name])?;
-        term.write_all(b"Todo list status updated successfully.\n");
+        let _ = term.write_all(b"Todo list status updated successfully.\n");
     }
 
     Ok(())
 }
 
 fn todolist_options(term: &mut impl std::io::Write) -> Result<()> {
-    term.write_all(b"1) Show tasks\n");
-    term.write_all(b"2) Edit name\n");
-    term.write_all(b"3) Edit status\n");
-    term.write_all(b"4) Add new task\n");
-    term.write_all(b"5) Delete\n");
+    let _ = term.write_all(b"1) Show tasks\n");
+    let _ = term.write_all(b"2) Edit name\n");
+    let _ = term.write_all(b"3) Edit status\n");
+    let _ = term.write_all(b"4) Add new task\n");
+    let _ = term.write_all(b"5) Delete\n");
     Ok(())
 }
 
 fn select_task(user: &User, term: &mut impl std::io::Write, conn: &Connection, todo: &mut TodoList) -> Result<()> {   
-    term.write_all(b"Select task\n");
+    let _ = term.write_all(b"Select task\n");
 
     let mut option: i32;
 
@@ -418,11 +454,9 @@ fn select_task(user: &User, term: &mut impl std::io::Write, conn: &Connection, t
         if (1..=todo.tasks.len() as i32).contains(&option) {
             break;
         } else {
-            term.write_all(format!("Invalid option. Please enter a number between 1 and {}\n", todo.tasks.len()).as_bytes());
+            let _ = term.write_all(format!("Invalid option. Please enter a number between 1 and {}\n", todo.tasks.len()).as_bytes());
         }
     }
-
-    let task = &mut todo.tasks[(option - 1) as usize];
     options_for_tasks(term)?;
 
     let mut option_task: i32;
@@ -433,11 +467,11 @@ fn select_task(user: &User, term: &mut impl std::io::Write, conn: &Connection, t
         if (1..=3).contains(&option_task) {
             break;
         } else {
-            term.write_all(b"Invalid option. Please enter a number between 1 and 3\n");
+            let _ = term.write_all(b"Invalid option. Please enter a number between 1 and 3\n");
         }
     }
 
-    match option_task {
+    let _ = match option_task {
         1 => edit_task_name(user, todo, (option-1) as usize, term, conn),
         2 => edit_task_status(user, todo, (option-1) as usize, term, conn),
         3 => delete_task(user, todo, (option-1) as usize, term, conn),
@@ -448,13 +482,13 @@ fn select_task(user: &User, term: &mut impl std::io::Write, conn: &Connection, t
 }
 
 fn edit_task_name(user: &User, todo: &mut TodoList, index: usize, term: &mut impl std::io::Write, conn: &Connection) -> Result<()> {
-    term.write_all(b"Type new name:\n");
+    let _ = term.write_all(b"Type new name:\n");
     let new_name: String = Input::new().interact_text().unwrap();
     todo.tasks[index].name = new_name;
 
     let tasks_json = serde_json::to_string(&todo.tasks).unwrap();
     conn.execute("UPDATE todos SET tasks = ?1 WHERE userid = ?2 AND name = ?3", params![tasks_json, user.id, todo.name])?;
-    term.write_all(b"Task name updated successfully.\n");
+    let _ = term.write_all(b"Task name updated successfully.\n");
     Ok(())
 }
 
@@ -466,7 +500,7 @@ fn edit_task_status(user: &User, todo: &mut TodoList, index: usize, term: &mut i
 
         let tasks_json = serde_json::to_string(&todo.tasks).unwrap();
         conn.execute("UPDATE todos SET tasks = ?1 WHERE userid = ?2 AND name = ?3", params![tasks_json, user.id, todo.name])?;
-        term.write_all(b"Task status updated successfully.\n");
+        let _ = term.write_all(b"Task status updated successfully.\n");
     }
 
     Ok(())
@@ -477,6 +511,70 @@ fn delete_task(user: &User, todo: &mut TodoList, index: usize, term: &mut impl s
     
     let tasks_json = serde_json::to_string(&todo.tasks).unwrap();
     conn.execute("UPDATE todos SET tasks = ?1 WHERE userid = ?2 AND name = ?3", params![tasks_json, user.id, todo.name])?;
-    term.write_all(b"Task deleted successfully.\n");
+    let _ = term.write_all(b"Task deleted successfully.\n");
+    Ok(())
+}
+
+fn delete_user(user: &User, term: &Term, conn: &Connection) -> Result<()> {
+    
+    conn.execute("DELETE FROM users WHERE id = ?1", params![user.id])?;
+
+    
+    term.write_line("Deleted user").unwrap();
+
+    Ok(())
+}
+
+fn change_login(user: &User, term: &Term, conn: &Connection) -> Result<()> {
+    loop {
+        term.write_line("Enter new login").unwrap();
+        let new_login: String = Input::new().interact_text().unwrap();
+
+        if !if_login_already_exists(&new_login, conn)? {
+            // Username does not exist, proceed with update
+            conn.execute("UPDATE users SET login = ?1 WHERE id = ?2", params![new_login, user.id])?;
+            term.write_line("Changed username").unwrap();
+            break;
+        } else {
+            term.write_line("This username is already taken").unwrap();
+        }
+    }
+
+    Ok(())
+}
+
+fn if_login_already_exists(login: &str, conn: &Connection) -> Result<bool> {
+    let mut stmt = conn.prepare("SELECT COUNT(*) FROM users WHERE login = ?1")?;
+
+    let count: i32 = stmt.query_row(params![login], |row| {
+        row.get(0)
+    })?;
+
+    Ok(count > 0)
+}
+
+fn update_password(user: &User, term: &Term, conn: &Connection) -> Result<()> {
+    let mut password: String;
+    let mut password2: String;
+
+    loop {
+        let _ = term.write_line("Enter your new password");
+        password = term.read_line().unwrap();
+
+        let _ = term.write_line("Reenter your new password");
+        password2 = term.read_line().unwrap();
+
+        if password != password2 {
+            let _ = term.write_line("Passwords do not match");
+        } else if password == user.password {
+            let _ = term.write_line("You already use this password");
+        } else {
+            let hashed_password = hash(password, DEFAULT_COST).unwrap();
+            conn.execute("UPDATE users SET password = ?1 WHERE id = ?2", params![hashed_password, user.id])?;
+            let _ = term.write_line("Password updated successfully");
+            break;
+        }
+    }
+
     Ok(())
 }
